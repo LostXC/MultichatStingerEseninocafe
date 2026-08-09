@@ -299,15 +299,46 @@ function interpolatedBox(t){
   }
   return A || B;
 }
-function boxCornersAt(t){
+// pad grows the box outward along its own axes (px), used to overlap the two
+// stroke passes so their shared edge can't show a seam — see SEAM_OVERLAP.
+function boxCornersAt(t, pad = 0){
   const bx = interpolatedBox(t);
   if(!bx) return null;
-  const c = Math.cos(bx.angle), s = Math.sin(bx.angle), hw = bx.w/2, hh = bx.h/2;
+  const c = Math.cos(bx.angle), s = Math.sin(bx.angle), hw = bx.w/2 + pad, hh = bx.h/2 + pad;
   return [[-hw,-hh],[hw,-hh],[hw,hh],[-hw,hh]].map(([x,y])=>[bx.cx+x*c-y*s, bx.cy+x*s+y*c]);
 }
 function clipToCorners(ctx, corners){
   corners.forEach((p,i)=> i ? ctx.lineTo(p[0],p[1]) : ctx.moveTo(p[0],p[1]));
   ctx.closePath();
+}
+
+/* How far the BACK stroke pass reaches past the backBox, in canvas px.
+
+   The jar's stroke is painted twice against complementary clips of the same
+   box — inside it behind the gems, outside it in front of them — so together
+   they should rebuild one whole stroke. Canvas clips are anti-aliased, though,
+   so on the shared edge the back pass paints coverage a and the front pass
+   1-a, and compositing those lands at 1-(1-a)*a, which never reaches opaque:
+   the white fill underneath shows through as a hairline along the box's top
+   and bottom edges. Letting the back pass run a pixel past the boundary makes
+   it cover that line solidly. The front pass — the edge you actually see, and
+   the one that decides which gems are occluded — is left exactly where it was,
+   and it paints straight over the extra pixel. */
+const SEAM_OVERLAP = 1;
+
+/* Offscreen layer the jar is composited on before it's blitted at its current
+   alpha — see the render loop. Allocated once and cleared per frame; sizing a
+   canvas allocates a backing store, and doing that every frame would undo the
+   point of baking the frames in the first place. */
+let _jarLayer = null;
+function jarLayer(){
+  if(!_jarLayer){
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    _jarLayer = c.getContext('2d');
+  }
+  _jarLayer.clearRect(0, 0, W, H);
+  return _jarLayer;
 }
 
 function pairsRaw(frameIdx){
@@ -991,38 +1022,55 @@ function loop(ts){
   }
   const fillImg = fillBaked[fi] || fillImgs[fi], strokeImg = strokeBaked[fi] || strokeImgs[fi];
 
-  ctx.globalAlpha = alpha;
-  ctx.drawImage(fillImg, 0, 0, W, H);
+  /* The jar is assembled opaque on its own layer and blitted once at `alpha`.
 
-  const corners = boxCornersAt(playing ? playhead : LAST());
+     Fading each pass individually instead is what made the fade look wrong: the
+     stroke is painted twice against complementary clips (see SEAM_OVERLAP), and
+     wherever those two passes overlap, two draws at alpha a composite to
+     1-(1-a)^2 — darker than the single draw everywhere else, so the overlap
+     surfaced as a dark hairline the moment the jar started fading. Any two
+     overlapping pieces had the same problem; a gem crossing the stroke was
+     quietly denser than the rest of it all the way through the fade.
+
+     Compositing first and fading once means every overlap resolves at full
+     opacity, exactly as it looks when the jar is solid, and `alpha` then dims a
+     finished picture. Costs one extra 400x400 blit per frame. */
+  const lx = jarLayer();
+  lx.drawImage(fillImg, 0, 0, W, H);
+
+  const boxT = playing ? playhead : LAST();
+  const corners = boxCornersAt(boxT);
   if(corners){
-    ctx.save();
-    ctx.beginPath(); clipToCorners(ctx, corners); ctx.clip();
-    ctx.drawImage(strokeImg, 0, 0, W, H);
-    ctx.restore();
+    lx.save();
+    // grown by SEAM_OVERLAP so this pass covers the boundary the front pass
+    // will only half-cover; the overlap ends up hidden under that pass
+    lx.beginPath(); clipToCorners(lx, boxCornersAt(boxT, SEAM_OVERLAP)); lx.clip();
+    lx.drawImage(strokeImg, 0, 0, W, H);
+    lx.restore();
   }
-  ctx.globalAlpha = 1;
 
-  drawNotes(ctx, now);   // middle ground: behind the gems, in front of the back art
+  drawNotes(lx, now);   // middle ground: behind the gems, in front of the back art
 
-  ctx.globalAlpha = alpha;
-  if(!introHidden) for(const g of prefill) drawGem(ctx, g);
-  for(const g of gems) drawGem(ctx, g);
+  if(!introHidden) for(const g of prefill) drawGem(lx, g);
+  for(const g of gems) drawGem(lx, g);
 
   if(corners){
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(0,0,W,H);
-    clipToCorners(ctx, corners);
-    ctx.clip('evenodd');
-    ctx.drawImage(strokeImg, 0, 0, W, H);
-    ctx.restore();
+    lx.save();
+    lx.beginPath();
+    lx.rect(0,0,W,H);
+    clipToCorners(lx, corners);
+    lx.clip('evenodd');
+    lx.drawImage(strokeImg, 0, 0, W, H);
+    lx.restore();
   } else {
-    ctx.drawImage(strokeImg, 0, 0, W, H);
+    lx.drawImage(strokeImg, 0, 0, W, H);
   }
 
   // front-most plane: flying bits, over the jar stroke
-  for(const fl of flights) drawFlight(ctx, fl, now);
+  for(const fl of flights) drawFlight(lx, fl, now);
+
+  ctx.globalAlpha = alpha;
+  ctx.drawImage(lx.canvas, 0, 0);
   ctx.globalAlpha = 1;
 
   if(debug){
