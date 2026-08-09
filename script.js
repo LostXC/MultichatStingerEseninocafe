@@ -16,7 +16,7 @@ const CFG = {
   gemSize: 72,             // settled gem size (design-space px, scaled via MAP)
   overlap: 0.4,            // physics radius shrink 0–0.5
   defaultBits: 20,         // demo fill amount
-  maxJarGems: 26,          // physical jar capacity — oldest gems culled beyond this
+  maxJarGems: 30,          // physical jar capacity — oldest gems culled beyond this
   maxQueuedThrows: 40,     // big cheers get clamped to this many visible throws
   throwDurationMs: 780,    // full flight time along the arc
   throwStaggerMs: 170,     // gap between queued throws
