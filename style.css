@@ -60,3 +60,7 @@ input.num{
   background:var(--bone); border:2px solid var(--ink); padding:5px 8px;
 }
 #loading[hidden]{ display:none; }
+/* Hard gate: nothing may paint this bar over the stream. The loader note and any
+   asset error are diagnostics — without ?debug they only ever reach the console,
+   and this rule makes that true even if some code path unhides the element. */
+body:not(.debug) #loading{ display:none !important; }

@@ -195,7 +195,18 @@ function saveJarState() {
 
 /* ---------------- assets ---------------- */
 const $ = id => document.getElementById(id);
-function loadImg(url){
+
+/* OBS's browser source (CEF) drops image decodes when the whole set — ~150 SVGs —
+   is requested in one burst: an onerror fires for a file that is sitting right
+   there on disk, and the old loader turned that into a red "asset error" bar over
+   the stream. So: load through a small pool, retry a failure before believing it,
+   and never let a frame that stays missing take the whole overlay down. */
+const LOAD_CONCURRENCY = 8;   // parallel image requests
+const LOAD_RETRIES     = 3;   // extra attempts after the first failure
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+function loadImgOnce(url){
   return new Promise((res, rej)=>{
     const im = new Image();
     im.onload = ()=>res(im);
@@ -204,24 +215,79 @@ function loadImg(url){
   });
 }
 
+async function loadImg(url, retries = LOAD_RETRIES){
+  for(let attempt = 0; ; attempt++){
+    try{
+      // bust the failed entry out of the cache on a retry (file:// ignores the query)
+      return await loadImgOnce(attempt && location.protocol !== 'file:' ? `${url}?retry=${attempt}` : url);
+    }catch(err){
+      if(attempt >= retries) throw err;
+      await sleep(60 * (attempt + 1));
+    }
+  }
+}
+
+// Load a list through the pool. A url that never loads comes back as null instead
+// of rejecting, so one bad frame can't reject the whole batch.
+async function loadList(urls){
+  const out = new Array(urls.length);
+  let next = 0;
+  const worker = async ()=>{
+    while(next < urls.length){
+      const i = next++;
+      try{ out[i] = await loadImg(urls[i]); }
+      catch(err){ out[i] = null; console.warn('[assets] ' + err.message); }
+    }
+  };
+  await Promise.all(Array.from({length: Math.min(LOAD_CONCURRENCY, urls.length)}, worker));
+  return out;
+}
+
+// Frame arrays are index-aligned with collision.json / the stinger timeline, so a
+// hole gets filled with its nearest loaded neighbour (a repeated frame is invisible
+// at 25fps) rather than removed, which would shift every frame after it.
+function patchGaps(imgs){
+  const have = imgs.some(Boolean);
+  if(!have) return imgs;
+  for(let i=0; i<imgs.length; i++){
+    if(imgs[i]) continue;
+    let j = i - 1;
+    while(j >= 0 && !imgs[j]) j--;
+    if(j < 0){ j = i + 1; while(j < imgs.length && !imgs[j]) j++; }
+    imgs[i] = imgs[j];
+  }
+  return imgs;
+}
+
 let fillImgs = [], strokeImgs = [], gemImgs = [], subImgs = [], donoImgs = [], noteImgs = [];
 
 async function loadAssets(){
   const nTip = collision.frames.length;   // frame count follows collision.json
-  const tipF = Promise.all(Array.from({length:nTip}, (_,i)=>loadImg(TIP_FILL(i))));
-  const tipS = Promise.all(Array.from({length:nTip}, (_,i)=>loadImg(TIP_STROKE(i))));
-  const subs = Promise.all(Array.from({length:CFG.subFrames}, (_,i)=>loadImg(SUB_FRAME(i))));
-  const gems = Promise.all(GEM_URLS.map(loadImg));
-  const notes = Promise.all(['assets/notes/music-eighth-note.svg',
-                             'assets/notes/music-quaver-note.svg'].map(loadImg));
-  [fillImgs, strokeImgs, subImgs, gemImgs, noteImgs] = await Promise.all([tipF, tipS, subs, gems, notes]);
-  GEM_COLORS.forEach((c,i)=>{ gemByColor[c] = gemImgs[i]; });
+  const [tipF, tipS, subs, gems, notes] = await Promise.all([
+    loadList(Array.from({length:nTip}, (_,i)=>TIP_FILL(i))),
+    loadList(Array.from({length:nTip}, (_,i)=>TIP_STROKE(i))),
+    loadList(Array.from({length:CFG.subFrames}, (_,i)=>SUB_FRAME(i))),
+    loadList(GEM_URLS),
+    loadList(['assets/notes/music-eighth-note.svg', 'assets/notes/music-quaver-note.svg']),
+  ]);
+  fillImgs   = patchGaps(tipF).filter(Boolean);
+  strokeImgs = patchGaps(tipS).filter(Boolean);
+  subImgs    = patchGaps(subs).filter(Boolean);
+  noteImgs   = notes.filter(Boolean);
+  // a gem that won't load borrows another colour's sprite — a wrong-coloured bit
+  // beats a crash in the draw loop
+  const gemFallback = gems.find(Boolean);
+  gemImgs = gems.map(im => im || gemFallback).filter(Boolean);
+  GEM_COLORS.forEach((c,i)=>{ if(gemImgs[i]) gemByColor[c] = gemImgs[i]; });
 
   // donation frames are optional — probe until the first missing file
   for(let i=0; i<100; i++){
-    try{ donoImgs.push(await loadImg(DONO_FRAME(i))); }
+    try{ donoImgs.push(await loadImg(DONO_FRAME(i), 1)); }
     catch(e){ break; }
   }
+
+  // the jar can't draw without its own frames; everything else degrades quietly
+  if(!fillImgs.length || !strokeImgs.length) throw new Error('tip-jar frames failed to load');
 }
 
 /* ---------------- pre-rasterized frames ----------------
@@ -1347,13 +1413,18 @@ function wireHud(){
   const params = new URLSearchParams(location.search);
   // Only surface the "loading assets…" note while debugging — on stream it must stay
   // invisible (OBS reloads the source on scene changes, and a routine loader flashing
-  // each time looks broken). A hard asset error still shows so it isn't a silent blank.
-  if(params.has('debug')) $('loading').hidden = false;
+  // each time looks broken). Errors go to the console for the same reason: a red bar
+  // burned into the stream is worse than the missing frame it's reporting, and the
+  // loader already retries and patches over the frames it couldn't get.
+  if(params.has('debug')){ document.body.classList.add('debug'); $('loading').hidden = false; }
   try{
     await loadAssets();
   }catch(err){
-    $('loading').hidden = false;
-    $('loading').textContent = 'asset error: ' + err.message;
+    console.error('[assets] ' + err.message);
+    if(params.has('debug')){
+      $('loading').hidden = false;
+      $('loading').textContent = 'asset error: ' + err.message;
+    }
     return;
   }
   $('loading').hidden = true;
