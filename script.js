@@ -243,7 +243,7 @@ async function loadList(urls){
   return out;
 }
 
-// Frame arrays are index-aligned with collision.json / the stinger timeline, so a
+// Frame arrays are index-aligned with collision.js / the stinger timeline, so a
 // hole gets filled with its nearest loaded neighbour (a repeated frame is invisible
 // at 25fps) rather than removed, which would shift every frame after it.
 function patchGaps(imgs){
@@ -262,7 +262,7 @@ function patchGaps(imgs){
 let fillImgs = [], strokeImgs = [], gemImgs = [], subImgs = [], donoImgs = [], noteImgs = [];
 
 async function loadAssets(){
-  const nTip = collision.frames.length;   // frame count follows collision.json
+  const nTip = collision.frames.length;   // frame count follows collision.js
   const [tipF, tipS, subs, gems, notes] = await Promise.all([
     loadList(Array.from({length:nTip}, (_,i)=>TIP_FILL(i))),
     loadList(Array.from({length:nTip}, (_,i)=>TIP_STROKE(i))),
@@ -844,9 +844,6 @@ function pumpThrowQueue(){
     if(!throwQueue.length){ clearInterval(throwTimer); throwTimer=null; }
   }, CFG.throwStaggerMs);
 }
-// queue n throws; color is one of GEM_COLORS, or null for random
-// merge savedGems data so N low-tier gems become 1 higher-tier gem
-// queue n throws; color is one of GEM_COLORS, or null for random
 // merge savedGems data so N low-tier gems become 1 higher-tier gem
 function mergeSavedGems(targetCount){
   // 1. Sanitize: ensure any uncolored gems are marked as 'gray' so merging doesn't break
@@ -1389,9 +1386,9 @@ function wireHud(){
   $('cheerBtn').onclick   = ()=>cheer(parseInt($('cheerAmt').value, 10) || 0);
   $('subBtn').onclick     = ()=>playSub();
   $('donoBtn').onclick    = ()=>playDonation();
-  $('replayBtn').onclick  = ()=>boot(Math.min(bitCount, computeJarCapacity()));
-  $('demoBtn').onclick    = ()=>{ setBitCount(CFG.defaultBits); boot(CFG.defaultBits); };
-  $('resetBtn').onclick   = ()=>{ setBitCount(0); boot(0); };
+  $('replayBtn').onclick  = ()=>stinger.replayIntro();
+  $('demoBtn').onclick    = ()=>stinger.setBits(CFG.defaultBits);
+  $('resetBtn').onclick   = ()=>stinger.resetBits();
   $('debugChk').onchange    = e=>{ debug = e.target.checked; };
   $('gemDebugChk').onchange = e=>{ gemDebug = e.target.checked; };
   $('arcDebugChk').onchange = e=>{ arcDebug = e.target.checked; };
@@ -1404,7 +1401,7 @@ function wireHud(){
       case 'y': throwBits(10); break;
       case 's': playSub(); break;
       case 'd': playDonation(); break;
-      case 'r': boot(); break;
+      case 'r': stinger.replayIntro(); break;
     }
   });
 }

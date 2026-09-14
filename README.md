@@ -14,22 +14,21 @@ One overlay page (`index.html`) that hosts three stingers:
 - `assets/tip-jar-stinger/stroke/` — the jar animation, 36 frames @ 400x400
   (`tip-jar.00–35.svg`, stroke-only export). `assets/tip-jar-stinger/fill/` is GENERATED
   from it (same paths, white fill + white stroke = the silhouette drawn behind the gems).
-  If you replace the animation: drop new strokes in, update `assets/collision.json`, then
-  run `python3 _dev/regen-tip-assets.py`. Frame count and canvas size are read from
-  collision.json — nothing to update in script.js.
-- `assets/collision.js` — `assets/collision.json` wrapped as a JS global (`fetch()` is
-  blocked on `file://`)
+  If you replace the animation: drop new strokes in, then re-trace the walls into
+  `assets/collision.js`. Frame count and canvas size are read from it — nothing to
+  update in script.js.
+- `assets/collision.js` — the traced jar geometry, as a JS global
+  (`window.TIPJAR_COLLISION`) rather than JSON, because `fetch()` is blocked on
+  `file://`. This is the only copy; edit it in place.
 - `assets/vendor/matter.min.js` — local Matter.js, no CDN dependency
 - `assets/sub-stinger/` — reprocessed from the original 1920x1080 export:
   whole scene mirrored (paw enters from the left), cropped to 500x600 bottom-anchored
   and centered on the skull card, with the skull card itself counter-flipped so it reads
-  exactly as drawn (`_dev/process-sub-frames.py`; originals in `assets/backup`-era history)
+  exactly as drawn (the original 1920x1080 export lives in this repo's git history)
 - `assets/notes/` — the two music-note glyphs extracted from `music-effect.svg`
-- `assets/backup/` — the previous 500x650 tip-jar frames + collision.json
 - All throw arcs, note arcs, gem and sub-stinger sizes were authored in the original
   500x650 mock space; `MAP` in script.js anchors them to the jar's final backBox, so
   they follow the art automatically whenever the animation changes size.
-- `_dev/view.html` — frame-strip viewer for eyeballing any frame folder
 
 ## Bits behaviour
 
